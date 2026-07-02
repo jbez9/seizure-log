@@ -583,7 +583,14 @@ function renderHistory() {
     return;
   }
 
-  list.innerHTML = filtered.map(e => {
+  const isFiltered = currentFilter !== 'all' || fromDate || toDate;
+  const countBanner = isFiltered
+    ? `<div style="font-size:13px;color:var(--text2);margin-bottom:10px;padding:10px 14px;background:var(--accent-dim);border:1px solid var(--accent);border-radius:var(--radius-sm)">
+        <span style="font-weight:600;color:var(--accent)">${filtered.length}</span> event${filtered.length !== 1 ? 's' : ''} in selected range
+       </div>`
+    : '';
+
+  list.innerHTML = countBanner + filtered.map(e => {
     const syms = e.Symptoms ? e.Symptoms.split('; ').filter(Boolean) : [];
     const post = e.Postictal ? e.Postictal.split('; ').filter(Boolean) : [];
     const badge = e.Severity ? `<span class="badge badge-${e.Severity}">${e.Severity}</span>` : '';
@@ -713,22 +720,66 @@ function generateSummary() {
       </div>
     </div>` : '').join('');
 
-  // Daily seizure count
-  const dayMap = {};
-  data.forEach(e => { dayMap[e.Date] = (dayMap[e.Date] || 0) + 1; });
-  const dayEntries = Object.entries(dayMap).sort((a,b)=>a[0].localeCompare(b[0]));
-  const dayMax = Math.max(1, ...Object.values(dayMap));
-  const dailyChart = dayEntries.map(([date, cnt]) => `
-    <div class="day-row">
+  // Duration bucket definitions with colors
+  const DUR_BUCKETS = [
+    { key: '0–30s',   label: '0–30s',   color: '#6c8ef5', test: s => s !== null && s <= 30 },
+    { key: '31s–1m',  label: '31s–1m',  color: '#4caf80', test: s => s !== null && s > 30 && s <= 60 },
+    { key: '1m–2m',   label: '1m–2m',   color: '#e8a838', test: s => s !== null && s > 60 && s <= 120 },
+    { key: '2m–5m',   label: '2m–5m',   color: '#a78bfa', test: s => s !== null && s > 120 && s <= 300 },
+    { key: '5m+',     label: '5m+',     color: '#e85858', test: s => s !== null && s > 300 },
+    { key: 'Unknown', label: '?',        color: '#555b73', test: s => s === null },
+  ];
+
+  // Daily seizure count grouped by duration bucket
+  const dayBucketMap = {}; // date -> { bucketKey -> count }
+  data.forEach(e => {
+    const secs = parseDurToSecs(e.Duration);
+    const bucket = DUR_BUCKETS.find(b => b.test(secs)) || DUR_BUCKETS[5];
+    if (!dayBucketMap[e.Date]) dayBucketMap[e.Date] = {};
+    dayBucketMap[e.Date][bucket.key] = (dayBucketMap[e.Date][bucket.key] || 0) + 1;
+  });
+  const dayEntries = Object.entries(dayBucketMap).sort((a,b)=>a[0].localeCompare(b[0]));
+  const dayTotals = dayEntries.map(([,bmap]) => Object.values(bmap).reduce((a,v)=>a+v,0));
+  const dayMax = Math.max(1, ...dayTotals);
+
+  // Legend HTML
+  const legendHtml = DUR_BUCKETS.filter(b => data.some(e => {
+    const s = parseDurToSecs(e.Duration); return b.test(s);
+  })).map(b =>
+    `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:12px;font-size:11px;color:var(--text2)">
+      <span style="width:10px;height:10px;border-radius:2px;background:${b.color};flex-shrink:0"></span>${b.label}
+    </span>`
+  ).join('');
+
+  // Stacked bar per day
+  const dailyChart = dayEntries.map(([date, bmap], i) => {
+    const total = dayTotals[i];
+    const totalPct = Math.round(total / dayMax * 100);
+    const segments = DUR_BUCKETS.map(b => {
+      const cnt = bmap[b.key] || 0;
+      if (!cnt) return '';
+      const pct = Math.round(cnt / total * 100);
+      return `<div style="width:${pct}%;background:${b.color};height:100%;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;color:#fff;min-width:${cnt > 0 ? '18px' : '0'}">${cnt}</div>`;
+    }).join('');
+    return `
+    <div class="day-row" style="margin-bottom:6px">
       <div class="day-label">${fmtDateShort(date)}</div>
-      <div class="bar-track" style="height:16px">
-        <div class="bar-fill c1" style="width:${Math.round(cnt/dayMax*100)}%;height:16px;font-size:10px">${cnt}</div>
+      <div style="flex:1">
+        <div style="display:flex;height:20px;border-radius:4px;overflow:hidden;width:${totalPct}%;min-width:24px;background:var(--bg3)">
+          ${segments}
+        </div>
+        <div style="font-size:10px;color:var(--text3);margin-top:2px">${total} total</div>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 
   document.getElementById('summary-out').innerHTML =
     `<div class="chart-wrap"><div class="chart-title">Seizures by duration</div>${durChart || '<p style="color:var(--text3);font-size:13px">No duration data</p>'}</div>` +
-    `<div class="chart-wrap"><div class="chart-title">Seizures per day</div><div class="day-grid">${dailyChart || '<p style="color:var(--text3);font-size:13px">No data</p>'}</div></div>` +
+    `<div class="chart-wrap">
+      <div class="chart-title">Seizures per day</div>
+      <div style="margin-bottom:12px;line-height:2">${legendHtml}</div>
+      <div class="day-grid">${dailyChart || '<p style="color:var(--text3);font-size:13px">No data</p>'}</div>
+    </div>` +
     `<div class="summary-pre">${t}</div>`;
 
   document.getElementById('copy-btn-wrap').style.display = '';
