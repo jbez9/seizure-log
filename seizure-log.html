@@ -167,7 +167,12 @@
   .date-filter-sep { font-size: 13px; color: var(--text3); flex-shrink: 0; }
   .clear-filter { font-size: 12px; color: var(--accent); background: none; border: none; cursor: pointer; padding: 0; white-space: nowrap; }
 
-  .who-input { background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-size: 15px; font-family: var(--font); padding: 10px 13px; outline: none; width: 100%; }
+  #timer-start-btn:active { opacity: 0.8; }
+  #timer-stop-btn:active { opacity: 0.8; }
+  @keyframes pulse-red { 0%,100%{box-shadow:0 0 0 0 rgba(232,88,88,0.4)} 50%{box-shadow:0 0 0 8px rgba(232,88,88,0)} }
+  .timer-running { animation: pulse-red 1.5s infinite; }
+
+    .who-input { background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-size: 15px; font-family: var(--font); padding: 10px 13px; outline: none; width: 100%; }
   .who-input:focus { border-color: var(--accent); }
 </style>
 </head>
@@ -209,15 +214,32 @@
       <div class="card-title">Seizure details</div>
       <div class="field">
         <label>Duration</label>
-        <div class="row2">
-          <div style="position:relative">
-            <input type="number" id="s-dur-min" placeholder="0" min="0" max="99" inputmode="numeric" style="padding-right:36px">
-            <span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:13px;color:var(--text3);pointer-events:none">min</span>
+        <div style="display:flex;gap:0;margin-bottom:10px;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden">
+          <button id="dur-tab-manual" onclick="switchDurTab('manual')" style="flex:1;padding:8px;background:var(--bg3);color:var(--text2);border:none;font-size:13px;font-weight:500;font-family:var(--font);cursor:pointer">Manual</button>
+          <button id="dur-tab-timer" onclick="switchDurTab('timer')" style="flex:1;padding:8px;background:var(--accent);color:#fff;border:none;font-size:13px;font-weight:600;font-family:var(--font);cursor:pointer">⏱ Timer</button>
+        </div>
+        <!-- Manual entry -->
+        <div id="dur-manual" style="display:none">
+          <div class="row2">
+            <div style="position:relative">
+              <input type="number" id="s-dur-min" placeholder="0" min="0" max="99" inputmode="numeric" style="padding-right:36px">
+              <span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:13px;color:var(--text3);pointer-events:none">min</span>
+            </div>
+            <div style="position:relative">
+              <input type="number" id="s-dur-sec" placeholder="0" min="0" max="59" inputmode="numeric" style="padding-right:36px">
+              <span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:13px;color:var(--text3);pointer-events:none">sec</span>
+            </div>
           </div>
-          <div style="position:relative">
-            <input type="number" id="s-dur-sec" placeholder="0" min="0" max="59" inputmode="numeric" style="padding-right:36px">
-            <span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:13px;color:var(--text3);pointer-events:none">sec</span>
+        </div>
+        <!-- Timer -->
+        <div id="dur-timer">
+          <div id="timer-display" style="font-size:48px;font-weight:700;text-align:center;letter-spacing:2px;color:var(--text);padding:12px 0 8px;font-variant-numeric:tabular-nums">00:00</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <button id="timer-start-btn" onclick="timerStart()" style="padding:12px;background:var(--green);color:#fff;border:none;border-radius:var(--radius-sm);font-size:15px;font-weight:700;font-family:var(--font);cursor:pointer">START</button>
+            <button id="timer-stop-btn" onclick="timerStop()" style="padding:12px;background:var(--red-dim);color:var(--red);border:1px solid var(--red);border-radius:var(--radius-sm);font-size:15px;font-weight:700;font-family:var(--font);cursor:pointer;display:none">STOP</button>
+            <button id="timer-reset-btn" onclick="timerReset()" style="padding:10px;background:var(--bg3);color:var(--text2);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:var(--font);cursor:pointer;display:none;grid-column:span 2">Reset</button>
           </div>
+          <div id="timer-saved-label" style="display:none;text-align:center;font-size:13px;color:var(--green);margin-top:8px;font-weight:600"></div>
         </div>
       </div>
       <div class="field" style="margin-bottom:0"><label>Seizure type</label>
@@ -274,7 +296,7 @@
     </div>
 
     <div style="margin-bottom:8px">
-      <button class="btn btn-primary" id="save-btn" onclick="saveEntry()">
+      <button class="btn btn-primary" id="save-btn" onclick="saveEntry()" style="padding:9px;font-size:13px;">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 13l4 4L19 7"/></svg>
         Save Entry
       </button>
@@ -471,6 +493,8 @@ function clearForm() {
   setNow();
   document.getElementById('s-dur-min').value = '';
   document.getElementById('s-dur-sec').value = '';
+  timerReset();
+  switchDurTab('manual');
   document.getElementById('s-type').value = '';
   document.getElementById('s-notes').value = '';
   severity = '';
@@ -495,6 +519,76 @@ function syncLoggerInput(val) {
     b.className = 'sev-btn';
     if (b.dataset.who === val) b.classList.add('active-mild');
   });
+}
+
+// ── DURATION TIMER ────────────────────────────────────────────────────
+let timerInterval = null;
+let timerSeconds = 0;
+let timerRunning = false;
+
+function switchDurTab(tab) {
+  const isManual = tab === 'manual';
+  document.getElementById('dur-manual').style.display = isManual ? '' : 'none';
+  document.getElementById('dur-timer').style.display  = isManual ? 'none' : '';
+  document.getElementById('dur-tab-manual').style.background = isManual ? 'var(--accent)' : 'var(--bg3)';
+  document.getElementById('dur-tab-manual').style.color = isManual ? '#fff' : 'var(--text2)';
+  document.getElementById('dur-tab-timer').style.background = isManual ? 'var(--bg3)' : 'var(--accent)';
+  document.getElementById('dur-tab-timer').style.color = isManual ? 'var(--text2)' : '#fff';
+}
+
+function timerTick() {
+  timerSeconds++;
+  const m = Math.floor(timerSeconds / 60);
+  const s = timerSeconds % 60;
+  document.getElementById('timer-display').textContent =
+    String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+}
+
+function timerStart() {
+  if (timerRunning) return;
+  timerRunning = true;
+  // Also set the log time to now when timer starts
+  const n = new Date();
+  document.getElementById('s-date').value = n.toISOString().split('T')[0];
+  document.getElementById('s-time').value = n.toTimeString().slice(0,5);
+  timerInterval = setInterval(timerTick, 1000);
+  document.getElementById('timer-start-btn').style.display = 'none';
+  document.getElementById('timer-stop-btn').style.display = '';
+  document.getElementById('timer-reset-btn').style.display = 'none';
+  document.getElementById('timer-saved-label').style.display = 'none';
+  document.getElementById('timer-display').classList.add('timer-running');
+}
+
+function timerStop() {
+  if (!timerRunning) return;
+  clearInterval(timerInterval);
+  timerRunning = false;
+  document.getElementById('timer-display').classList.remove('timer-running');
+  document.getElementById('timer-start-btn').style.display = 'none';
+  document.getElementById('timer-stop-btn').style.display = 'none';
+  document.getElementById('timer-reset-btn').style.display = '';
+  // Store result in hidden min/sec fields so buildDuration() picks it up
+  const m = Math.floor(timerSeconds / 60);
+  const s = timerSeconds % 60;
+  document.getElementById('s-dur-min').value = m;
+  document.getElementById('s-dur-sec').value = s;
+  const label = document.getElementById('timer-saved-label');
+  label.textContent = '✓ ' + (m ? m + 'm ' : '') + s + 's saved';
+  label.style.display = '';
+}
+
+function timerReset() {
+  clearInterval(timerInterval);
+  timerRunning = false;
+  timerSeconds = 0;
+  document.getElementById('timer-display').textContent = '00:00';
+  document.getElementById('timer-display').classList.remove('timer-running');
+  document.getElementById('timer-start-btn').style.display = '';
+  document.getElementById('timer-stop-btn').style.display = 'none';
+  document.getElementById('timer-reset-btn').style.display = 'none';
+  document.getElementById('timer-saved-label').style.display = 'none';
+  document.getElementById('s-dur-min').value = '';
+  document.getElementById('s-dur-sec').value = '';
 }
 
 function buildDuration() {
@@ -768,7 +862,12 @@ function generateSummary() {
         <div style="display:flex;height:20px;border-radius:4px;overflow:hidden;width:${totalPct}%;min-width:24px;background:var(--bg3)">
           ${segments}
         </div>
-        <div style="font-size:10px;color:var(--text3);margin-top:2px">${total} total</div>
+        <div style="font-size:10px;color:var(--text3);margin-top:3px;display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+          <span style="font-weight:600;color:var(--text2)">${total} seizure${total !== 1 ? 's' : ''}</span>
+          ${DUR_BUCKETS.filter(b => bmap[b.key]).map(b =>
+            `<span style="color:${b.color};font-size:10px">${b.label}: ${bmap[b.key]}</span>`
+          ).join('<span style="color:var(--border)">·</span>')}
+        </div>
       </div>
     </div>`;
   }).join('');
@@ -936,13 +1035,13 @@ function countByArr(arr,key) {
   },{});
 }
 function parseDurToSecs(d) {
-  if (!d) return null;
+  if (!d || String(d).trim() === '' || String(d).trim() === '0') return null;
   d = String(d).trim();
-  // "1m 30s" or "1m" or "45s"
   const mMatch = d.match(/(\d+)m/);
   const sMatch = d.match(/(\d+)s/);
   if (!mMatch && !sMatch) return null;
-  return (mMatch ? parseInt(mMatch[1]) * 60 : 0) + (sMatch ? parseInt(sMatch[1]) : 0);
+  const total = (mMatch ? parseInt(mMatch[1]) * 60 : 0) + (sMatch ? parseInt(sMatch[1]) : 0);
+  return total === 0 ? null : total;
 }
 function fmtDateShort(d) {
   const iso = toISODate(d);
