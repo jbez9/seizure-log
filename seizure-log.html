@@ -137,6 +137,11 @@
 
   .logged-by { font-size: 11px; color: var(--text3); margin-top: 4px; }
 
+
+  .med-row-inner { padding: 4px 0; }
+  .med-pills { display: flex; flex-wrap: wrap; gap: 7px; }
+  .med-row .med-divider:last-of-type { display: none; }
+
   .who-input { background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-size: 15px; font-family: var(--font); padding: 10px 13px; outline: none; width: 100%; }
   .who-input:focus { border-color: var(--accent); }
 </style>
@@ -159,7 +164,12 @@
   <div class="content">
     <div class="card">
       <div class="card-title">Who is logging?</div>
-      <input class="who-input" id="logger-name" placeholder="Your name (e.g. Mom, Dad)" value="">
+      <div class="sev-row" style="margin-bottom:10px">
+        <div class="sev-btn" data-who="Mom" onclick="setLogger(this)">Mom</div>
+        <div class="sev-btn" data-who="Dad" onclick="setLogger(this)">Dad</div>
+        <div class="sev-btn" data-who="Other" onclick="setLogger(this)">Other</div>
+      </div>
+      <input class="who-input" id="logger-name" placeholder="Or type a name…" value="" oninput="syncLoggerInput(this.value)">
     </div>
 
     <div class="card">
@@ -172,7 +182,19 @@
 
     <div class="card">
       <div class="card-title">Seizure details</div>
-      <div class="field"><label>Duration</label><input type="text" id="s-dur" placeholder="e.g. 45 sec, 2 min"></div>
+      <div class="field">
+        <label>Duration</label>
+        <div class="row2">
+          <div style="position:relative">
+            <input type="number" id="s-dur-min" placeholder="0" min="0" max="99" inputmode="numeric" style="padding-right:36px">
+            <span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:13px;color:var(--text3);pointer-events:none">min</span>
+          </div>
+          <div style="position:relative">
+            <input type="number" id="s-dur-sec" placeholder="0" min="0" max="59" inputmode="numeric" style="padding-right:36px">
+            <span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:13px;color:var(--text3);pointer-events:none">sec</span>
+          </div>
+        </div>
+      </div>
       <div class="field" style="margin-bottom:0"><label>Seizure type</label>
         <select id="s-type">
           <option value="">— select type —</option>
@@ -213,8 +235,17 @@
     </div>
 
     <div class="card">
+      <div class="card-title">Medications given</div>
+      <div id="med-rows"></div>
+      <button class="btn btn-ghost" style="margin-top:10px;font-size:13px;padding:9px" onclick="addMedRow()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Add medication
+      </button>
+    </div>
+
+    <div class="card">
       <div class="card-title">Notes</div>
-      <textarea id="s-notes" placeholder="Anything else — medication given, context, how she seemed…"></textarea>
+      <textarea id="s-notes" placeholder="Anything else — context, how she seemed…"></textarea>
     </div>
 
     <div style="margin-bottom:8px">
@@ -285,9 +316,9 @@
 <script>
 const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby6JhUjFr7_5JW1J-tMS4XCiyHDQMsJ6Tgez_gbSJW2ieYfCkyql3lJA1tTecz160wi/exec';
 
-const SYMPTOMS = ['Staring/blank','Eye deviation','Eye blinking','Head turn','Lip smacking','Arm jerking','Leg jerking','Body stiffening','Limpness','Drooling','Color change','Crying out','Loss of awareness','Fell down','Incontinence'];
+const SYMPTOMS = ['Staring/blank','Eye deviation','Eye blinking','Head turn','Lip smacking','Arm jerking','Leg jerking','Body stiffening','Limpness','Drooling','Color change','Crying out','Loss of awareness','Fell down','Incontinence','DSAT'];
 const POSTICTAL = ['Confused','Sleepy/tired','Headache','No memory','Crying','Back to normal quickly','Vomited'];
-const TRIGGERS  = ['Tired/sleep deprived','Fever/illness','Missed medication','Flickering lights','Stress','Exercise','Unknown'];
+const TRIGGERS  = ['Tired/sleep deprived','Fever/illness','Missed medication','Flickering lights','Stress','Exercise','Cluster','Back to Back','Unknown'];
 
 let entries = [];
 let severity = '';
@@ -301,7 +332,12 @@ window.addEventListener('load', () => {
   buildTags('postictal-tags', POSTICTAL);
   buildTags('trigger-tags', TRIGGERS);
   const saved = localStorage.getItem('sz_logger');
-  if (saved) document.getElementById('logger-name').value = saved;
+  if (saved) {
+    document.getElementById('logger-name').value = saved;
+    document.querySelectorAll('.sev-btn[data-who]').forEach(b => {
+      if (b.dataset.who === saved) b.classList.add('active-mild');
+    });
+  }
   loadEntries();
 });
 
@@ -316,7 +352,7 @@ async function loadEntries() {
   setSyncStatus('Syncing…');
   try {
     const data = await api({ action: 'list' });
-    entries = (data || []).map(normalizeEntry).sort((a,b) => new Date(b.Date+' '+(b.Time||'')) - new Date(a.Date+' '+(a.Time||'')));
+    entries = (data || []).map(normalizeEntry).sort((a,b) => parseLocal(b.Date, b.Time) - parseLocal(a.Date, a.Time));
     setSyncStatus(`${entries.length} entries · ${fmt12(new Date())}`);
     renderHistory();
   } catch(e) {
@@ -337,6 +373,7 @@ function normalizeEntry(r) {
     Triggers: r.Triggers || r.triggers || '',
     Notes: r.Notes || r.notes || '',
     LoggedBy: r.LoggedBy || r.loggedBy || '',
+    Medications: r.Medications || r.medications || '',
     CreatedAt: r.CreatedAt || r.createdAt || ''
   };
 }
@@ -356,13 +393,14 @@ async function saveEntry() {
     ID: Date.now().toString(),
     Date: date,
     Time: document.getElementById('s-time').value,
-    Duration: document.getElementById('s-dur').value.trim(),
+    Duration: buildDuration(),
     Type: document.getElementById('s-type').value,
     Severity: severity,
     Symptoms: getSelected('symptom-tags').join('; '),
     Postictal: getSelected('postictal-tags').join('; '),
     Triggers: getSelected('trigger-tags').join('; '),
     Notes: document.getElementById('s-notes').value.trim(),
+    Medications: buildMedications(),
     LoggedBy: loggerName,
     CreatedAt: new Date().toISOString()
   };
@@ -400,7 +438,8 @@ function setNow() {
 
 function clearForm() {
   setNow();
-  document.getElementById('s-dur').value = '';
+  document.getElementById('s-dur-min').value = '';
+  document.getElementById('s-dur-sec').value = '';
   document.getElementById('s-type').value = '';
   document.getElementById('s-notes').value = '';
   severity = '';
@@ -408,6 +447,32 @@ function clearForm() {
   buildTags('symptom-tags', SYMPTOMS);
   buildTags('postictal-tags', POSTICTAL);
   buildTags('trigger-tags', TRIGGERS);
+  document.getElementById('med-rows').innerHTML = '';
+}
+
+function setLogger(el) {
+  document.querySelectorAll('.sev-btn[data-who]').forEach(b => b.className = 'sev-btn');
+  el.classList.add('active-mild');
+  const name = el.dataset.who;
+  document.getElementById('logger-name').value = name === 'Other' ? '' : name;
+  if (name !== 'Other') localStorage.setItem('sz_logger', name);
+  if (name === 'Other') document.getElementById('logger-name').focus();
+}
+
+function syncLoggerInput(val) {
+  document.querySelectorAll('.sev-btn[data-who]').forEach(b => {
+    b.className = 'sev-btn';
+    if (b.dataset.who === val) b.classList.add('active-mild');
+  });
+}
+
+function buildDuration() {
+  const min = parseInt(document.getElementById('s-dur-min').value) || 0;
+  const sec = parseInt(document.getElementById('s-dur-sec').value) || 0;
+  if (!min && !sec) return '';
+  if (min && sec) return `${min}m ${sec}s`;
+  if (min) return `${min}m`;
+  return `${sec}s`;
 }
 
 function setSev(el) {
@@ -443,7 +508,7 @@ function renderHistory() {
   }
 
   // stats
-  const last30 = entries.filter(e => new Date(e.Date) >= daysAgo(30));
+  const last30 = entries.filter(e => parseLocal(e.Date) >= daysAgo(30));
   const sevMap = countBy(entries, 'Severity');
   document.getElementById('stats-grid').style.display = '';
   document.getElementById('stats-grid').innerHTML = `
@@ -492,6 +557,7 @@ function renderHistory() {
         </div>
       </div>
       ${chips ? `<div class="entry-chips">${chips}</div>` : ''}
+      ${e.Medications ? `<div class="entry-notes" style="font-style:normal"><span style="color:var(--text3);font-size:11px">MED </span>${e.Medications}</div>` : ''}
       ${e.Notes ? `<div class="entry-notes">${e.Notes}</div>` : ''}
     </div>`;
   }).join('');
@@ -512,7 +578,7 @@ function generateSummary() {
   let rangeLabel = 'All time';
   if (period !== 'all') {
     const cutoff = daysAgo(parseInt(period));
-    data = entries.filter(e => new Date(e.Date) >= cutoff);
+    data = entries.filter(e => parseLocal(e.Date) >= cutoff);
     rangeLabel = `Last ${period} days (${fmtDate(cutoff.toISOString().split('T')[0])} – ${fmtDate(new Date().toISOString().split('T')[0])})`;
   }
 
@@ -522,7 +588,7 @@ function generateSummary() {
     return;
   }
 
-  const sorted = [...data].sort((a,b)=>new Date(a.Date+' '+(a.Time||''))-new Date(b.Date+' '+(b.Time||'')));
+  const sorted = [...data].sort((a,b)=>parseLocal(a.Date,a.Time)-parseLocal(b.Date,b.Time));
   const typeMap = countBy(data,'Type');
   const sevMap  = countBy(data,'Severity');
   const symMap  = countByArr(data,'Symptoms');
@@ -570,6 +636,7 @@ function generateSummary() {
     if(e.Symptoms) t+=`   Symptoms: ${e.Symptoms}\n`;
     if(e.Postictal) t+=`   Postictal: ${e.Postictal}\n`;
     if(e.Triggers) t+=`   Triggers: ${e.Triggers}\n`;
+    if(e.Medications) t+=`   Medications: ${e.Medications}\n`;
     if(e.Notes) t+=`   Notes: ${e.Notes}\n`;
     if(e.LoggedBy) t+=`   Logged by: ${e.LoggedBy}\n`;
   });
@@ -597,6 +664,63 @@ function copySummary() {
   });
 }
 
+
+// ── MEDICATIONS ───────────────────────────────────────────────────────
+const MEDS = ['Phenobarbital','Lacosamide','Clobazam','Ativan'];
+const MED_TIMES = ['Morning','Night','Rescue'];
+
+function addMedRow() {
+  const container = document.getElementById('med-rows');
+  const idx = container.children.length;
+  const div = document.createElement('div');
+  div.className = 'med-row';
+  div.dataset.idx = idx;
+  div.innerHTML = `
+    <div class="med-row-inner">
+      <div class="med-select-wrap">
+        <div class="med-pills" id="med-name-${idx}">
+          ${MEDS.map(m => `<div class="tag med-name-tag" data-val="${m}" onclick="toggleMedName(this, ${idx})">${m}</div>`).join('')}
+        </div>
+      </div>
+      <div style="margin-top:8px">
+        <div style="font-size:12px;color:var(--text3);margin-bottom:5px">Time given</div>
+        <div class="med-pills" id="med-time-${idx}">
+          ${MED_TIMES.map(t => `<div class="tag med-time-tag" data-val="${t}" onclick="toggleMedTime(this, ${idx})">${t}</div>`).join('')}
+        </div>
+      </div>
+      <button onclick="removeMedRow(this)" style="background:none;border:none;color:var(--text3);font-size:12px;margin-top:8px;cursor:pointer;padding:0">Remove</button>
+    </div>
+    <div style="height:1px;background:var(--border);margin:12px 0" class="med-divider"></div>
+  `;
+  container.appendChild(div);
+}
+
+function toggleMedName(el, idx) {
+  document.querySelectorAll(`#med-name-${idx} .med-name-tag`).forEach(t => t.classList.remove('sel'));
+  el.classList.add('sel');
+}
+function toggleMedTime(el, idx) {
+  el.classList.toggle('sel');
+}
+
+function removeMedRow(btn) {
+  btn.closest('.med-row').remove();
+}
+
+function buildMedications() {
+  const rows = document.querySelectorAll('.med-row');
+  const parts = [];
+  rows.forEach(row => {
+    const idx = row.dataset.idx;
+    const name = row.querySelector('.med-name-tag.sel');
+    const times = [...row.querySelectorAll('.med-time-tag.sel')].map(t=>t.dataset.val);
+    if (name) {
+      parts.push(name.dataset.val + (times.length ? ' (' + times.join(', ') + ')' : ''));
+    }
+  });
+  return parts.join('; ');
+}
+
 // ── NAVIGATION ────────────────────────────────────────────────────────
 const PAGE_TITLES = { log: 'Log a Seizure', history: 'History', summary: 'Neurologist Summary' };
 function showPage(id) {
@@ -617,6 +741,10 @@ function showToast(msg) {
   setTimeout(()=>t.classList.remove('show'), 2200);
 }
 
+function parseLocal(date, time) {
+  if (!date) return new Date(0);
+  return new Date(date + 'T' + (time || '12:00') + ':00');
+}
 function fmtDate(d) {
   const dt = new Date(d + 'T12:00:00');
   return dt.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'});
