@@ -142,6 +142,31 @@
   .med-pills { display: flex; flex-wrap: wrap; gap: 7px; }
   .med-row .med-divider:last-of-type { display: none; }
 
+
+  /* CHARTS */
+  .chart-wrap { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 12px; }
+  .chart-title { font-size: 13px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 14px; }
+  .bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .bar-label { font-size: 12px; color: var(--text2); width: 80px; flex-shrink: 0; text-align: right; }
+  .bar-track { flex: 1; background: var(--bg3); border-radius: 99px; height: 20px; overflow: hidden; position: relative; }
+  .bar-fill { height: 100%; border-radius: 99px; display: flex; align-items: center; justify-content: flex-end; padding-right: 8px; font-size: 11px; font-weight: 600; color: #fff; min-width: 24px; transition: width 0.4s ease; }
+  .bar-fill.c1 { background: var(--accent); }
+  .bar-fill.c2 { background: var(--green); }
+  .bar-fill.c3 { background: var(--amber); }
+  .bar-fill.c4 { background: #a78bfa; }
+  .day-grid { display: flex; flex-direction: column; gap: 6px; }
+  .day-row { display: flex; align-items: center; gap: 10px; }
+  .day-label { font-size: 12px; color: var(--text2); width: 90px; flex-shrink: 0; }
+  .day-dots { display: flex; flex-wrap: wrap; gap: 4px; }
+  .day-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); opacity: 0.85; }
+
+  /* DATE FILTER */
+  .date-filter { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
+  .date-filter input { flex: 1; background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-size: 14px; font-family: var(--font); padding: 8px 11px; outline: none; }
+  .date-filter input:focus { border-color: var(--accent); }
+  .date-filter-sep { font-size: 13px; color: var(--text3); flex-shrink: 0; }
+  .clear-filter { font-size: 12px; color: var(--accent); background: none; border: none; cursor: pointer; padding: 0; white-space: nowrap; }
+
   .who-input { background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-size: 15px; font-family: var(--font); padding: 10px 13px; outline: none; width: 100%; }
   .who-input:focus { border-color: var(--accent); }
 </style>
@@ -265,6 +290,12 @@
   <div class="content">
     <div class="stats-grid" id="stats-grid" style="display:none"></div>
     <div class="pill-row" id="filter-pills" style="display:none; margin-bottom:12px"></div>
+    <div class="date-filter" id="date-filter-row" style="display:none">
+      <input type="date" id="filter-from" onchange="renderHistory()">
+      <span class="date-filter-sep">to</span>
+      <input type="date" id="filter-to" onchange="renderHistory()">
+      <button class="clear-filter" onclick="clearDateFilter()">Clear</button>
+    </div>
     <div id="history-list"><div class="empty"><div class="empty-icon">📋</div><p>Loading entries…</p></div></div>
   </div>
 </div>
@@ -365,7 +396,7 @@ function normalizeEntry(r) {
     ID: r.ID || r.id || '',
     Date: toISODate(r.Date || r.date || ''),
     Time: r.Time || r.time || '',
-    Duration: r.Duration || r.duration || '',
+    Duration: cleanDuration(r.Duration || r.duration || ''),
     Type: r.Type || r.type || '',
     Severity: r.Severity || r.severity || '',
     Symptoms: r.Symptoms || r.symptoms || '',
@@ -497,12 +528,19 @@ function getSelected(id) {
 }
 
 // ── HISTORY ───────────────────────────────────────────────────────────
+function clearDateFilter() {
+  document.getElementById('filter-from').value = '';
+  document.getElementById('filter-to').value = '';
+  renderHistory();
+}
+
 function renderHistory() {
   const list = document.getElementById('history-list');
 
   if (!entries.length) {
     document.getElementById('stats-grid').style.display = 'none';
     document.getElementById('filter-pills').style.display = 'none';
+    document.getElementById('date-filter-row').style.display = 'none';
     list.innerHTML = '<div class="empty"><div class="empty-icon">📋</div><p>No seizures logged yet.<br>Tap Log to add the first entry.</p></div>';
     return;
   }
@@ -518,7 +556,7 @@ function renderHistory() {
     <div class="stat"><div class="stat-val" style="font-size:18px;padding-top:4px">${topKey(sevMap) || '—'}</div><div class="stat-label">Typical severity</div></div>
   `;
 
-  // filters
+  // month pills
   const months = [...new Set(entries.map(e=>e.Date.slice(0,7)))].sort().reverse();
   const pills = document.getElementById('filter-pills');
   pills.style.display = '';
@@ -527,8 +565,18 @@ function renderHistory() {
     return `<div class="pill ${currentFilter===m?'active':''}" onclick="setFilter('${m}')">${lbl}</div>`;
   }).join('');
 
-  // filtered list
-  const filtered = currentFilter === 'all' ? entries : entries.filter(e=>e.Date.startsWith(currentFilter));
+  // date range filter
+  document.getElementById('date-filter-row').style.display = '';
+  const fromVal = document.getElementById('filter-from').value;
+  const toVal   = document.getElementById('filter-to').value;
+  const fromDate = fromVal ? new Date(fromVal + 'T00:00:00') : null;
+  const toDate   = toVal   ? new Date(toVal   + 'T23:59:59') : null;
+
+  // apply filters
+  let filtered = entries;
+  if (currentFilter !== 'all') filtered = filtered.filter(e=>e.Date.startsWith(currentFilter));
+  if (fromDate) filtered = filtered.filter(e => parseLocal(e.Date) >= fromDate);
+  if (toDate)   filtered = filtered.filter(e => parseLocal(e.Date) <= toDate);
 
   if (!filtered.length) {
     list.innerHTML = '<div class="empty"><p>No entries for this period.</p></div>';
@@ -642,7 +690,47 @@ function generateSummary() {
   });
 
   summaryText = t;
-  document.getElementById('summary-out').innerHTML = `<div class="summary-pre">${t}</div>`;
+
+  // ── CHARTS ────────────────────────────────────────────────────────
+  // Duration buckets
+  const durBuckets = {'0–30s': 0, '31s–1m': 0, '1m–2m': 0, '2m–5m': 0, '5m+': 0, 'Unknown': 0};
+  data.forEach(e => {
+    const secs = parseDurToSecs(e.Duration);
+    if (secs === null) durBuckets['Unknown']++;
+    else if (secs <= 30) durBuckets['0–30s']++;
+    else if (secs <= 60) durBuckets['31s–1m']++;
+    else if (secs <= 120) durBuckets['1m–2m']++;
+    else if (secs <= 300) durBuckets['2m–5m']++;
+    else durBuckets['5m+']++;
+  });
+  const durMax = Math.max(1, ...Object.values(durBuckets));
+  const durColors = ['c1','c2','c3','c4','c1','c2'];
+  const durChart = Object.entries(durBuckets).map(([lbl, cnt], i) => cnt > 0 ? `
+    <div class="bar-row">
+      <div class="bar-label">${lbl}</div>
+      <div class="bar-track">
+        <div class="bar-fill ${durColors[i]}" style="width:${Math.round(cnt/durMax*100)}%">${cnt}</div>
+      </div>
+    </div>` : '').join('');
+
+  // Daily seizure count
+  const dayMap = {};
+  data.forEach(e => { dayMap[e.Date] = (dayMap[e.Date] || 0) + 1; });
+  const dayEntries = Object.entries(dayMap).sort((a,b)=>a[0].localeCompare(b[0]));
+  const dayMax = Math.max(1, ...Object.values(dayMap));
+  const dailyChart = dayEntries.map(([date, cnt]) => `
+    <div class="day-row">
+      <div class="day-label">${fmtDateShort(date)}</div>
+      <div class="bar-track" style="height:16px">
+        <div class="bar-fill c1" style="width:${Math.round(cnt/dayMax*100)}%;height:16px;font-size:10px">${cnt}</div>
+      </div>
+    </div>`).join('');
+
+  document.getElementById('summary-out').innerHTML =
+    `<div class="chart-wrap"><div class="chart-title">Seizures by duration</div>${durChart || '<p style="color:var(--text3);font-size:13px">No duration data</p>'}</div>` +
+    `<div class="chart-wrap"><div class="chart-title">Seizures per day</div><div class="day-grid">${dailyChart || '<p style="color:var(--text3);font-size:13px">No data</p>'}</div></div>` +
+    `<div class="summary-pre">${t}</div>`;
+
   document.getElementById('copy-btn-wrap').style.display = '';
   document.getElementById('gen-btn').textContent = 'Regenerate';
 
@@ -741,6 +829,26 @@ function showToast(msg) {
   setTimeout(()=>t.classList.remove('show'), 2200);
 }
 
+function cleanDuration(d) {
+  if (!d) return '';
+  d = String(d).trim();
+  // If Sheets returned a time serial as string like "1:06:00" or "0:45:00"
+  var m = d.match(/^(\d+):(\d{2})(?::(\d{2}))?$/);
+  if (m) {
+    var mins = parseInt(m[1]);
+    var secs = parseInt(m[2]);
+    // m[3] would be seconds if HH:MM:SS — in that case m[1]=hours, m[2]=mins, m[3]=secs
+    if (m[3] !== undefined) {
+      mins = parseInt(m[1]) * 60 + parseInt(m[2]);
+      secs = parseInt(m[3]);
+    }
+    if (mins > 0 && secs > 0) return mins + 'm ' + secs + 's';
+    if (mins > 0) return mins + 'm';
+    if (secs > 0) return secs + 's';
+    return '';
+  }
+  return d;
+}
 function toISODate(d) {
   if (!d) return '';
   d = String(d).trim();
@@ -775,6 +883,22 @@ function countByArr(arr,key) {
     (e[key]||'').split('; ').filter(Boolean).forEach(v=>a[v]=(a[v]||0)+1);
     return a;
   },{});
+}
+function parseDurToSecs(d) {
+  if (!d) return null;
+  d = String(d).trim();
+  // "1m 30s" or "1m" or "45s"
+  const mMatch = d.match(/(\d+)m/);
+  const sMatch = d.match(/(\d+)s/);
+  if (!mMatch && !sMatch) return null;
+  return (mMatch ? parseInt(mMatch[1]) * 60 : 0) + (sMatch ? parseInt(sMatch[1]) : 0);
+}
+function fmtDateShort(d) {
+  const iso = toISODate(d);
+  if (!iso) return d;
+  const dt = new Date(iso + 'T12:00:00');
+  if (isNaN(dt)) return d;
+  return dt.toLocaleDateString('en-US',{month:'short',day:'numeric'});
 }
 function topKey(obj) { const e=Object.entries(obj).sort((a,b)=>b[1]-a[1])[0]; return e?e[0]:''; }
 function cap(s) { return s.charAt(0).toUpperCase()+s.slice(1); }
