@@ -363,7 +363,7 @@ async function loadEntries() {
 function normalizeEntry(r) {
   return {
     ID: r.ID || r.id || '',
-    Date: r.Date || r.date || '',
+    Date: toISODate(r.Date || r.date || ''),
     Time: r.Time || r.time || '',
     Duration: r.Duration || r.duration || '',
     Type: r.Type || r.type || '',
@@ -741,12 +741,25 @@ function showToast(msg) {
   setTimeout(()=>t.classList.remove('show'), 2200);
 }
 
+function toISODate(d) {
+  if (!d) return '';
+  d = String(d).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(d)) return d.slice(0, 10);
+  if (/^\d{1,2}\/\d{1,2}\/\d{4}/.test(d)) {
+    const [m, day, y] = d.split('/');
+    return y + '-' + m.padStart(2,'0') + '-' + day.padStart(2,'0');
+  }
+  return d;
+}
 function parseLocal(date, time) {
   if (!date) return new Date(0);
-  return new Date(date + 'T' + (time || '12:00') + ':00');
+  return new Date(toISODate(date) + 'T' + (time || '12:00') + ':00');
 }
 function fmtDate(d) {
-  const dt = new Date(d + 'T12:00:00');
+  const iso = toISODate(d);
+  if (!iso) return '';
+  const dt = new Date(iso + 'T12:00:00');
+  if (isNaN(dt)) return String(d);
   return dt.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'});
 }
 function fmt12Time(t) {
